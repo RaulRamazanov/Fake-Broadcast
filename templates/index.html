@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Трансляция партии</title>
+<style>
+  :root {
+    --bg: #1e1f22; --panel: #2a2c30; --panel2: #33363b; --text: #ececec; --muted: #9a9ea6;
+    --light: #ebecd0; --dark: #779556; --ok: #3fb950; --bad: #e5534b;
+    --a1: #f6a23a; --a2: #4aa3ff; --a3: #b07cff; --reply: #e5534b;
+    --bar-white: #f2f2f2; --bar-black: #3a3a3a;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; background: var(--bg); color: var(--text);
+         font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+         display: flex; justify-content: center; padding: 16px; }
+  .wrap { width: 100%; max-width: 640px; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
+  h1 { font-size: 18px; margin: 0; font-weight: 600; }
+  .status { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--bad); flex: none; }
+  .dot.on { background: var(--ok); }
+
+  .controls { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
+  .seg { display: inline-flex; background: var(--panel); border-radius: 7px; padding: 3px; gap: 2px; }
+  .seg button { font: inherit; color: var(--text); background: none; border: 0; padding: 6px 12px; border-radius: 5px; cursor: pointer; }
+  .seg button.on { background: var(--panel2); box-shadow: inset 0 0 0 1px #4a4e55; font-weight: 600; }
+
+  .stage { display: flex; gap: 10px; align-items: stretch; }
+  .evalbar { width: 26px; flex: none; border-radius: 4px; overflow: hidden; position: relative;
+             background: var(--bar-black); display: flex; flex-direction: column-reverse; }
+  .evalbar.flipped { flex-direction: column; }
+  .evalbar .white { background: var(--bar-white); height: 50%; transition: height .6s ease; }
+  .evalbar .label { position: absolute; left: 0; right: 0; text-align: center; font-size: 11px; font-weight: 700; }
+  .evalbar .label.bottom { bottom: 4px; } .evalbar .label.top { top: 4px; }
+  .board { flex: 1; min-width: 0; }
+  svg#board { width: 100%; height: auto; display: block; border-radius: 4px; }
+  .coord { font-size: 19px; font-weight: 700; }
+
+  .info { background: var(--panel); border-radius: 6px; padding: 12px 14px; margin-top: 12px; }
+  .headline { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  .score { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; min-width: 84px; }
+  .title { font-size: 17px; }
+  .badge[hidden] { display: none; }
+  .badge { display: inline-block; font-size: 12px; padding: 3px 8px; border-radius: 10px; background: #3b3220; color: #f0c674; }
+  .lines { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 6px; }
+  .lines li { display: grid; grid-template-columns: 10px 62px 1fr; gap: 8px; align-items: baseline; font-size: 14px;
+              background: var(--panel2); border-radius: 5px; padding: 7px 10px; }
+  .sw { width: 10px; height: 10px; border-radius: 2px; align-self: center; }
+  .ls { font-weight: 700; font-variant-numeric: tabular-nums; }
+  .lm b { font-size: 15px; }
+  .lm span { color: var(--muted); }
+  .note { font-size: 14px; margin-top: 10px; color: var(--text); }
+  .meta { font-size: 12px; color: var(--muted); margin-top: 8px; }
+  .fen { font-family: ui-monospace, monospace; font-size: 11px; color: var(--muted); margin-top: 6px; word-break: break-all; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Трансляция партии</h1>
+    <div class="status"><span class="dot" id="dot"></span><span id="statusText">Ожидание данных...</span></div>
+  </header>
+
+  <div class="controls">
+    Лучшие ходы для:
+    <div class="seg" id="sideSel">
+      <button data-side="w">Белых</button>
+      <button data-side="b">Чёрных</button>
+      <button data-side="wb">Обеих</button>
+    </div>
+    <span class="badge" id="delay" hidden></span>
+  </div>
+
+  <div class="stage">
+    <div class="evalbar" id="evalbar">
+      <div class="white" id="evalWhite"></div>
+      <div class="label" id="evalLabel"></div>
+    </div>
+    <div class="board"><svg id="board" viewBox="0 0 800 800"></svg></div>
+  </div>
+
+  <div class="info">
+    <div class="headline">
+      <div class="score" id="score">—</div>
+      <div class="title" id="title">—</div>
+    </div>
+    <ul class="lines" id="lines"></ul>
+    <div class="note" id="note"></div>
+    <div class="meta" id="meta"></div>
+    <div class="fen" id="fen"></div>
+  </div>
+</div>
+
+<script>
+const FILES = 'abcdefgh';
+const FIG = { K: '♔', Q: '♕', R: '♖', B: '♗', N: '♘' };
+const NS = 'http://www.w3.org/2000/svg';
+const COLORS = ['var(--a1)', 'var(--a2)', 'var(--a3)'];
+const svg = document.getElementById('board');
+let lastKey = null, lastData = null;
+
+// --- выбор стороны (запоминается в браузере) ---
+let side = 'wb';
+try { side = localStorage.getItem('side') || 'wb'; } catch (e) {}
+function paintSide() {
+  document.querySelectorAll('#sideSel button').forEach(b => b.classList.toggle('on', b.dataset.side === side));
+}
+document.querySelectorAll('#sideSel button').forEach(b => b.addEventListener('click', () => {
+  side = b.dataset.side;
+  try { localStorage.setItem('side', side); } catch (e) {}
+  paintSide(); lastKey = null; if (lastData) render(lastData);
+}));
+paintSide();
+
+function el(tag, attrs, parent) {
+  const e = document.createElementNS(NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+
+function parseFen(fen) {
+  const b = {};
+  fen.split(' ')[0].split('/').forEach((row, i) => {
+    let f = 0;
+    for (const c of row) {
+      if (/\d/.test(c)) f += +c; else { b[FILES[f] + (8 - i)] = c; f++; }
+    }
+  });
+  return b;
+}
+
+function xy(sq, flipped) {
+  const f = FILES.indexOf(sq[0]), r = +sq[1];
+  const x = flipped ? 7 - f : f, y = flipped ? r - 1 : 8 - r;
+  return [x * 100 + 50, y * 100 + 50];
+}
+
+// arrows: [{ mv: 'e2e4', color, width, opacity, dashed }]
+function drawBoard(fen, flipped, arrows) {
+  svg.innerHTML = '';
+  const defs = el('defs', {}, svg);
+  arrows.forEach((a, i) => {
+    const m = el('marker', { id: 'h' + i, viewBox: '0 0 10 10', refX: 5, refY: 5,
+      markerWidth: 3.2, markerHeight: 3.2, orient: 'auto-start-reverse' }, defs);
+    el('path', { d: 'M0,0 L10,5 L0,10 z', fill: a.color }, m);
+  });
+
+  for (let x = 0; x < 8; x++) for (let y = 0; y < 8; y++) {
+    el('rect', { x: x * 100, y: y * 100, width: 100, height: 100, fill: (x + y) % 2 ? 'var(--dark)' : 'var(--light)' }, svg);
+  }
+  for (let i = 0; i < 8; i++) {
+    const file = flipped ? FILES[7 - i] : FILES[i], rank = flipped ? i + 1 : 8 - i;
+    el('text', { x: i * 100 + 84, y: 793, class: 'coord', fill: i % 2 ? 'var(--dark)' : 'var(--light)' }, svg).textContent = file;
+    el('text', { x: 5, y: i * 100 + 21, class: 'coord', fill: i % 2 ? 'var(--light)' : 'var(--dark)' }, svg).textContent = rank;
+  }
+  // подсветка клеток главного хода
+  if (arrows[0]) {
+    for (const sq of [arrows[0].mv.slice(0, 2), arrows[0].mv.slice(2, 4)]) {
+      const [cx, cy] = xy(sq, flipped);
+      el('rect', { x: cx - 50, y: cy - 50, width: 100, height: 100, fill: arrows[0].color, opacity: .25 }, svg);
+    }
+  }
+  const b = parseFen(fen);
+  for (const sq in b) {
+    const p = b[sq], name = (p === p.toUpperCase() ? 'w' : 'b') + p.toUpperCase();
+    const [cx, cy] = xy(sq, flipped);
+    el('image', { href: '/static/pieces/' + name + '.svg', x: cx - 50, y: cy - 50, width: 100, height: 100 }, svg);
+  }
+  // стрелки: сначала второстепенные, главная — поверх
+  arrows.map((a, i) => [a, i]).reverse().forEach(([a, i]) => {
+    const [x1, y1] = xy(a.mv.slice(0, 2), flipped), [x2, y2] = xy(a.mv.slice(2, 4), flipped);
+    const len = Math.hypot(x2 - x1, y2 - y1), k = (len - 32) / len;
+    const attrs = { x1, y1, x2: x1 + (x2 - x1) * k, y2: y1 + (y2 - y1) * k, stroke: a.color,
+      'stroke-width': a.width, 'stroke-linecap': 'round', opacity: a.opacity, 'marker-end': 'url(#h' + i + ')' };
+    if (a.dashed) attrs['stroke-dasharray'] = '18 14';
+    el('line', attrs, svg);
+  });
+}
+
+// Вариант движка в краткую нотацию: ♘f3, exd5, O-O, e8=♕
+function pvToText(fen, pv, limit) {
+  const b = parseFen(fen);
+  let white = fen.split(' ')[1] === 'w';
+  const out = [];
+  for (const mv of pv.slice(0, limit)) {
+    const from = mv.slice(0, 2), to = mv.slice(2, 4), promo = mv[4];
+    const p = b[from];
+    if (!p) break;
+    const kind = p.toUpperCase();
+    let cap = !!b[to], san;
+    if (kind === 'K' && Math.abs(FILES.indexOf(from[0]) - FILES.indexOf(to[0])) === 2) {
+      const short = to[0] === 'g', r = from[1];
+      b[(short ? 'f' : 'd') + r] = b[(short ? 'h' : 'a') + r];
+      delete b[(short ? 'h' : 'a') + r];
+      san = short ? 'O-O' : 'O-O-O';
+    } else if (kind === 'P') {
+      if (from[0] !== to[0] && !cap) { delete b[to[0] + from[1]]; cap = true; }
+      san = (cap ? from[0] + 'x' : '') + to + (promo ? '=' + FIG[promo.toUpperCase()] : '');
+    } else {
+      san = FIG[kind] + (cap ? 'x' : '') + to;
+    }
+    b[to] = promo ? (white ? promo.toUpperCase() : promo) : p;
+    delete b[from];
+    out.push(san);
+    white = !white;
+  }
+  return out;
+}
+
+function scoreText(l) {
+  if (!l) return '—';
+  if (l.mate != null) return l.mate === 0 ? '#' : (l.mate > 0 ? '#' : '#-') + Math.abs(l.mate);
+  if (l.cp != null) return (l.cp > 0 ? '+' : l.cp < 0 ? '−' : '') + (Math.abs(l.cp) / 100).toFixed(2);
+  return '—';
+}
+
+function whiteShare(l) {
+  if (!l) return 50;
+  if (l.mate != null) return l.mate > 0 ? 100 : l.mate < 0 ? 0 : 50;
+  if (l.cp == null) return 50;
+  return 50 + 50 * (2 / (1 + Math.exp(-0.00368208 * l.cp)) - 1);
+}
+
+const SIDE_GEN = { w: 'белых', b: 'чёрных' };
+
+function render(d) {
+  lastData = d;
+  document.getElementById('dot').classList.toggle('on', d.connected);
+  document.getElementById('statusText').textContent = d.status;
+
+  const delayEl = document.getElementById('delay');
+  if (d.delay > 0) {
+    delayEl.hidden = false;
+    delayEl.textContent = d.waiting > 0 ? 'Начало через ' + d.waiting + ' с' : 'Задержка ' + Math.round(d.delay / 60) + ' мин';
+  } else delayEl.hidden = true;
+
+  const a = d.analysis || {};
+  const fresh = a.fen === d.fen;
+  const lines = fresh && a.lines ? a.lines.filter(l => l.pv && l.pv.length) : [];
+  const turn = d.turn, other = turn === 'w' ? 'b' : 'w';
+  const forTurn = side.includes(turn);
+
+  // Стрелки
+  let arrows = [], key;
+  if (forTurn) {
+    arrows = lines.map((l, i) => ({ mv: l.pv[0], color: COLORS[i] || COLORS[2],
+      width: i === 0 ? 20 : 13, opacity: i === 0 ? .92 : .7 }));
+  } else if (lines[0] && lines[0].pv[1]) {
+    arrows = [{ mv: lines[0].pv[1], color: 'var(--reply)', width: 14, opacity: .75, dashed: true }];
+  }
+  key = d.fen + '|' + d.flipped + '|' + side + '|' + arrows.map(x => x.mv).join(',');
+  if (key !== lastKey) { drawBoard(d.fen, d.flipped, arrows); lastKey = key; }
+
+  // Шкала оценки
+  const top = lines[0];
+  document.getElementById('evalbar').classList.toggle('flipped', !!d.flipped);
+  const share = whiteShare(top);
+  document.getElementById('evalWhite').style.height = share + '%';
+  const label = document.getElementById('evalLabel');
+  label.textContent = !top ? '' : top.mate != null ? scoreText(top).replace('-', '') : (Math.abs(top.cp) / 100).toFixed(1);
+  const whiteAhead = share >= 50;
+  label.className = 'label ' + ((whiteAhead !== !!d.flipped) ? 'bottom' : 'top');
+  label.style.color = whiteAhead ? '#333' : '#eee';
+  document.getElementById('score').textContent = scoreText(top);
+
+  // Текст
+  const title = document.getElementById('title'), list = document.getElementById('lines'), note = document.getElementById('note');
+  list.innerHTML = ''; note.textContent = '';
+  if (!fresh || (!lines.length && !a.depth)) {
+    title.textContent = 'Ход ' + SIDE_GEN[turn] + ' · считаю...';
+  } else if (!lines.length) {
+    title.textContent = 'Ходов нет — партия окончена';
+  } else if (forTurn) {
+    title.textContent = 'Лучшие ходы ' + SIDE_GEN[turn];
+    lines.forEach((l, i) => {
+      const mv = pvToText(d.fen, l.pv, 9);
+      const li = document.createElement('li');
+      li.innerHTML = '<span class="sw"></span><span class="ls"></span><span class="lm"><b></b> <span></span></span>';
+      li.querySelector('.sw').style.background = COLORS[i] || COLORS[2];
+      li.querySelector('.ls').textContent = scoreText(l);
+      li.querySelector('.lm b').textContent = mv[0];
+      li.querySelector('.lm span').textContent = mv.slice(1).join('  ');
+      list.appendChild(li);
+    });
+  } else {
+    const mv = pvToText(d.fen, lines[0].pv, 2);
+    title.textContent = 'Сейчас ходят ' + (turn === 'w' ? 'белые' : 'чёрные');
+    note.textContent = mv[1]
+      ? 'Ожидаемый лучший ответ ' + SIDE_GEN[other] + ': ' + mv[1] + ' (если соперник сыграет ' + mv[0] + ')'
+      : 'Подсказка для ' + SIDE_GEN[other] + ' появится после хода соперника';
+  }
+
+  const src = d.source && d.source !== 'chess.com' ? ' · позиция: ' + d.source : '';
+  document.getElementById('meta').textContent = (a.engine || '') + (fresh && a.depth ? ' · глубина ' + a.depth : '') + src;
+  document.getElementById('fen').textContent = d.fen;
+}
+
+function poll() {
+  fetch('/get_fen').then(r => r.json()).then(render).catch(() => {
+    document.getElementById('dot').classList.remove('on');
+    document.getElementById('statusText').textContent = 'Сервер недоступен';
+  });
+}
+setInterval(poll, 500);
+poll();
+</script>
+</body>
+</html>

@@ -1,0 +1,22 @@
+services:
+  chess-viewer:
+    build: .
+    container_name: chess_viewer
+    # Linux: контейнер в сети компьютера, чтобы достучаться до Chrome на 127.0.0.1:9222.
+    # Страница: http://localhost:5000
+    network_mode: host
+    environment:
+      - FLASK_PORT=5000
+      - REMOTE_DEBUGGER=127.0.0.1:9222
+      - TAB_FILTER=chess.com
+      - ENGINE_DEPTH=30        # глубина анализа (0 = без ограничения)
+      - ENGINE_LINES=3         # сколько лучших ходов показывать
+      - ENGINE_HASH=512        # память движка, МБ
+      # - ENGINE_THREADS=8     # по умолчанию: все ядра минус одно
+      - LIVE_DELAY=1         # задержка для партий с людьми, сек (минимум 60)
+    restart: unless-stopped
+
+    # Windows / macOS (Docker Desktop): уберите network_mode, поставьте
+    # REMOTE_DEBUGGER=host.docker.internal:9222 и добавьте:
+    # ports:
+    #   - "3333:5000"
